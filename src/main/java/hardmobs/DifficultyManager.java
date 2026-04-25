@@ -3,15 +3,27 @@ package hardmobs;
 import net.minecraft.server.world.ServerWorld;
 
 public class DifficultyManager {
+    // Статическая переменная для хранения последнего вычисленного дня.
+    // По умолчанию 1, чтобы миксины не получили 0 при старте.
+    private static long lastMeasuredDay = 1;
+
+    /**
+     * Вычисляет текущий день и обновляет статическую переменную.
+     * @param world Серверный мир
+     * @return Текущий день (начиная с 1)
+     */
     public static long getDay(ServerWorld world) {
-        // Используем Math.floor, чтобы корректно считать прошедшие дни
-        return (long) Math.floor(world.getTimeOfDay() / 24000.0) + 1;
+        // getTimeOfDay() возвращает общее время мира в тиках.
+        // В сутках 24000 тиков. Добавляем 1, чтобы первый день был 1, а не 0.
+        lastMeasuredDay = (world.getTimeOfDay() / 24000L) + 1;
+        return lastMeasuredDay;
     }
 
-    public static float getMultiplier(ServerWorld world) {
-        long day = getDay(world);
-        // Важно: 0.05f — это 5%. На 1-й день будет (1 * 0.05) = 0.05.
-        // Итоговый множитель: 1.05
-        return 1.0f + (day * 0.05f);
+    /**
+     * Позволяет получить номер дня там, где нет прямого доступа к объекту World.
+     * Используется в SpawnGroupMixin.
+     */
+    public static long getLastMeasuredDay() {
+        return lastMeasuredDay;
     }
 }

@@ -6,7 +6,9 @@
 		"EntityVisibilityMixin",
 		"MobEntityAccessor",
 		"MobEntityMixin",
-		"ZombieEntityMixin"
+		"ZombieEntityMixin",
+		"SkeletonEntityMixin",
+		"PlayerMiningFatigueMixin"
 	],
 
 	"injectors": {
