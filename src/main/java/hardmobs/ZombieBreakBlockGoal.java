@@ -10,21 +10,18 @@ import java.util.EnumSet;
 
 public class ZombieBreakBlockGoal extends Goal {
     private final ZombieEntity zombie;
-    private BlockPos targetBlock;
-    private int breakProgress = -1;
-    private int lastProgress = -1;
+    private int rageTimer = 0;
     private int buildCooldown = 0;
 
     public ZombieBreakBlockGoal(ZombieEntity zombie) {
         this.zombie = zombie;
-        // Захватываем все контроли, так как мы теперь единственный ИИ
         this.setControls(EnumSet.of(Control.MOVE, Control.LOOK, Control.JUMP));
     }
 
     @Override
     public boolean canStart() {
-        // Работает всегда, если есть цель (игрок) и наступил 3-й день
         if (zombie.getWorld().isClient || zombie.getTarget() == null) return false;
+        // Работает только с 3-го дня
         return DifficultyManager.getDay((ServerWorld)zombie.getWorld()) >= 3;
     }
 
@@ -33,6 +30,8 @@ public class ZombieBreakBlockGoal extends Goal {
         return zombie.getTarget() != null && !zombie.getWorld().isClient;
     }
 
+    private double lastY = -999; // Добавь это поле в начало класса
+
     @Override
     public void tick() {
         if (zombie.getTarget() == null) return;
@@ -40,45 +39,55 @@ public class ZombieBreakBlockGoal extends Goal {
 
         double dist = zombie.distanceTo(zombie.getTarget());
         double dy = zombie.getTarget().getY() - zombie.getY();
+        long day = DifficultyManager.getDay(world);
 
+        // 1. ТАЙМЕР АННИГИЛЯЦИИ
+        // Если зомби поднялся выше (строит столб) — замедляем или сбрасываем таймер
+        if (zombie.getY() > lastY + 0.1) {
+            rageTimer = 0;
+            lastY = zombie.getY();
+        }
+
+        // Если зомби в процессе стройки (buildCooldown > 0), таймер НЕ растет
+        if (buildCooldown <= 0) {
+            rageTimer++;
+        }
+
+        int secondsLimit = (int) (20 - (day - 3));
+        if (secondsLimit < 5) secondsLimit = 5;
+        int ticksLimit = secondsLimit * 20;
+
+        if (rageTimer >= ticksLimit) {
+            annihilateSurroundings(world);
+            rageTimer = 0;
+            return;
+        }
+
+        // 2. АТАКА
         zombie.getLookControl().lookAt(zombie.getTarget(), 30.0F, 30.0F);
-
-        // 1. АТАКА (Приоритет только если мы на одном уровне)
         if (dist < 2.3 && Math.abs(dy) < 1.5) {
             zombie.getNavigation().stop();
             if (zombie.age % 10 == 0) {
                 zombie.swingHand(net.minecraft.util.Hand.MAIN_HAND);
-                zombie.tryAttack(zombie.getTarget());
+                if (zombie.tryAttack(zombie.getTarget())) {
+                    rageTimer = 0;
+                }
             }
             return;
         }
 
-        // Детектор столба: если игрок выше, мы В РЕЖИМЕ СТРОЙКИ
-        boolean isPillaring = dy > 1.2;
-
-        // 2. ЛОГИКА ЛОМАНИЯ
-        if (targetBlock != null || (zombie.horizontalCollision && !isPillaring && dist > 2.3)) {
-            if (targetBlock == null) targetBlock = findTargetBlock(world);
-            if (targetBlock != null) {
-                handleBreaking(world);
-                return;
-            }
-        }
-
-        // 3. ЛОГИКА СТРОЙКИ
+        // 3. СТРОЙКА
         if (buildCooldown <= 0) {
             if (shouldBuild(world)) {
                 tryBuild(world);
-                return;
+                return; // Важно: выходим, чтобы не включилось обычное движение в этот тик
             }
         } else {
             buildCooldown--;
         }
 
         // 4. ДВИЖЕНИЕ
-        if (isPillaring) {
-            // Вместо полной остановки навигации, просто заставляем его идти "в точку под игроком"
-            // Это поможет ему не сходить со столба, но стремиться к центру
+        if (dy > 1.2) {
             zombie.getNavigation().startMovingTo(zombie.getTarget().getX(), zombie.getY(), zombie.getTarget().getZ(), 1.0);
         } else {
             zombie.getNavigation().startMovingTo(zombie.getTarget(), 1.0);
@@ -86,129 +95,76 @@ public class ZombieBreakBlockGoal extends Goal {
     }
 
 
+    private void annihilateSurroundings(ServerWorld world) {
+        BlockPos center = zombie.getBlockPos();
+        int radius = 2; // Радиус разрушения
 
-
-
-
-
-    private void handleBreaking(ServerWorld world) {
-        zombie.getNavigation().stop();
-        zombie.getLookControl().lookAt(targetBlock.getX() + 0.5, targetBlock.getY() + 0.5, targetBlock.getZ() + 0.5);
-
-        int ticksNeeded = 40; // Скорость ломания (можно привязать к DifficultyManager)
-        breakProgress++;
-
-        int visualProgress = (int) ((float) breakProgress / (float) ticksNeeded * 10.0F);
-        if (visualProgress != lastProgress) {
-            world.setBlockBreakingInfo(zombie.getId(), targetBlock, visualProgress);
-            lastProgress = visualProgress;
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -1; y <= radius + 1; y++) { // Захватываем блок под ногами и над головой
+                for (int z = -radius; z <= radius; z++) {
+                    BlockPos target = center.add(x, y, z);
+                    // Ломаем всё, кроме бедрока
+                    if (world.getBlockState(target).getHardness(world, target) >= 0) {
+                        world.breakBlock(target, true);
+                    }
+                }
+            }
         }
-
-        if (breakProgress >= ticksNeeded) {
-            world.breakBlock(targetBlock, true);
-            stop();
-        }
+        zombie.velocityModified = true;
     }
 
     private boolean shouldBuild(ServerWorld world) {
+        if (zombie.getTarget() == null) return false;
+
         double dy = zombie.getTarget().getY() - zombie.getY();
-        BlockPos pos = zombie.getBlockPos();
-        Direction dir = getDirectionToTarget();
+        double dist = zombie.distanceTo(zombie.getTarget());
 
-        // Если прямо перед нами блок (на уровне ног или головы), НЕ строим, а ломаем
-        BlockPos headPos = pos.offset(dir).up();
-        BlockPos footPos = pos.offset(dir);
-        if (!world.isAir(headPos) || !world.isAir(footPos)) return false;
-
-        // Логика столба
+        // 1. ЛОГИКА СТОЛБА
         if (dy > 1.2) {
-            boolean isStuck = zombie.getVelocity().horizontalLengthSquared() < 0.002;
-            if (zombie.horizontalCollision || isStuck || zombie.distanceTo(zombie.getTarget()) < 2.5) {
-                return zombie.isOnGround();
-            }
+            // Условие стало проще: если мы на земле и игрок выше нас в радиусе 4 блоков
+            // (4 блока — чтобы он начинал строиться заранее, а не только впритык)
+            return zombie.isOnGround() && dist < 4.0;
         }
 
-        // Логика моста
-        BlockPos bridgePos = footPos.down();
-        return world.isAir(footPos) && world.isAir(bridgePos) && dy > -1.5;
+        // 2. ЛОГИКА МОСТА
+        Direction dir = getDirectionToTarget();
+        BlockPos front = zombie.getBlockPos().offset(dir);
+
+        // Проверяем, что впереди пропасть
+        if (world.isAir(front) && world.isAir(front.down())) {
+            // Строим мост, если игрок не слишком далеко и не сильно ниже нас
+            return dist < 10.0 && dy > -1.5;
+        }
+
+        return false;
     }
 
 
-
     private void tryBuild(ServerWorld world) {
+        zombie.getNavigation().stop();
         BlockPos pos = zombie.getBlockPos();
         double dy = zombie.getTarget().getY() - zombie.getY();
 
         if (dy > 1.2) {
             // СТОЛБ
-            if (world.isAir(pos.up(2))) {
-                zombie.getNavigation().stop();
-                zombie.jump();
-                world.setBlockState(pos, net.minecraft.block.Blocks.DIRT.getDefaultState());
-
-                // Центрируем и чуть подбрасываем (ускоряем процесс)
-                zombie.refreshPositionAfterTeleport(pos.getX() + 0.5, zombie.getY() + 0.25, pos.getZ() + 0.5);
-
-                buildCooldown = 7; // Было 15, теперь строит в 2 раза быстрее!
-            }
+            zombie.jump();
+            world.setBlockState(pos, Blocks.DIRT.getDefaultState());
+            zombie.refreshPositionAfterTeleport(pos.getX() + 0.5, zombie.getY() + 0.25, pos.getZ() + 0.5);
+            buildCooldown = 7;
         } else {
             // МОСТ
             Direction dir = getDirectionToTarget();
             BlockPos bridgePos = pos.offset(dir).down();
             if (world.isAir(bridgePos)) {
-                world.setBlockState(bridgePos, net.minecraft.block.Blocks.DIRT.getDefaultState());
-                buildCooldown = 4; // Мосты строит почти мгновенно
+                world.setBlockState(bridgePos, Blocks.DIRT.getDefaultState());
+                buildCooldown = 4;
             }
         }
     }
-
-
-
-
-    private BlockPos findTargetBlock(ServerWorld world) {
-        // Проверяем классические позиции: перед ногами и головой
-        Direction dir = zombie.getHorizontalFacing();
-        BlockPos pos = zombie.getBlockPos();
-        BlockPos[] primaryChecks = {pos.offset(dir), pos.offset(dir).up(), pos.up(2)};
-
-        for (BlockPos p : primaryChecks) {
-            if (isBreakable(world, p)) return p;
-        }
-
-        // Если основные не сработали, а зомби уперся — ищем любой блок вокруг,
-        // мешающий пройти к вектору цели
-        for (int x = -1; x <= 1; x++) {
-            for (int z = -1; z <= 1; z++) {
-                for (int y = 0; y <= 1; y++) {
-                    BlockPos checkPos = pos.add(x, y, z);
-                    if (isBreakable(world, checkPos) && zombie.getTarget().squaredDistanceTo(checkPos.getX(), checkPos.getY(), checkPos.getZ()) < zombie.getTarget().squaredDistanceTo(pos.getX(), pos.getY(), pos.getZ())) {
-                        return checkPos;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-
-    private boolean isBreakable(ServerWorld world, BlockPos p) {
-        return !world.isAir(p) && world.getBlockState(p).getHardness(world, p) >= 0;
-    }
-
 
     private Direction getDirectionToTarget() {
         double dx = zombie.getTarget().getX() - zombie.getX();
         double dz = zombie.getTarget().getZ() - zombie.getZ();
         return Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
-    }
-
-    @Override
-    public void stop() {
-        if (targetBlock != null) {
-            ((ServerWorld)zombie.getWorld()).setBlockBreakingInfo(zombie.getId(), targetBlock, -1);
-        }
-        targetBlock = null;
-        breakProgress = -1;
-        lastProgress = -1;
     }
 }
