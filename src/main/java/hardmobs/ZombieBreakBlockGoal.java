@@ -98,96 +98,68 @@ public class ZombieBreakBlockGoal extends Goal {
         return !state.isAir() && state.getHardness(world, pos) >= 0;
     }
 
+    // 1. Исправленный tick()
     @Override
     public void tick() {
         if (zombie.getTarget() == null) return;
         ServerWorld world = (ServerWorld) zombie.getWorld();
-        // В самом начале tick, после проверок на null
-        zombie.getLookControl().lookAt(zombie.getTarget(), 30.0F, 30.0F);
-
-
-        // Дистанция до цели
         double distSq = zombie.squaredDistanceTo(zombie.getTarget());
 
-        // Если игрок рядом — приоритет на атаку (прекращаем работу цели)
         if (distSq < 4.0 && Math.abs(zombie.getY() - zombie.getTarget().getY()) < 1.5) {
             stop();
             return;
         }
 
-        // 1. ЛОГИКА ЛОМАНИЯ
         if (targetBlock != null) {
-            zombie.getNavigation().stop(); // Останавливаемся, чтобы копать
+            zombie.getNavigation().stop();
             zombie.getLookControl().lookAt(targetBlock.getX() + 0.5, targetBlock.getY() + 0.5, targetBlock.getZ() + 0.5);
-
-            long day = DifficultyManager.getDay(world);
-            int ticksNeeded = (int) (60 / (1.0 + (day - 3) * 0.1));
+            int ticksNeeded = (int) (60 / (1.0 + (DifficultyManager.getDay(world) - 3) * 0.1));
             if (ticksNeeded < 5) ticksNeeded = 5;
-
             breakProgress++;
-
-            // Визуализация трещин (от 0 до 9)
             int visualProgress = (int) ((float) breakProgress / (float) ticksNeeded * 10.0F);
             if (visualProgress != lastProgress) {
                 world.setBlockBreakingInfo(zombie.getId(), targetBlock, visualProgress);
                 lastProgress = visualProgress;
             }
-
             if (breakProgress >= ticksNeeded) {
                 world.breakBlock(targetBlock, true);
                 stop();
             }
-        }
-        // 2. ЛОГИКА СТРОЙКИ
-        else if (buildCooldown <= 0) {
+        } else if (buildCooldown <= 0) {
             tryBuild(world);
         }
-
         if (buildCooldown > 0) buildCooldown--;
     }
 
+    // 2. Исправленный tryBuild()
     private void tryBuild(ServerWorld world) {
         BlockPos zombiePos = zombie.getBlockPos();
         double targetY = zombie.getTarget().getY();
+        Direction dir = getDirectionToTarget();
 
-        // ЛОГИКА СТОЛБА (ВВЕРХ)
         if (targetY > zombie.getY() + 1.2) {
-            // Проверяем, что над головой нет препятствий
             if (world.isAir(zombiePos.up(2))) {
-                zombie.getNavigation().stop(); // Обязательно стопаем навигацию, чтобы не "съехал" со столба
+                zombie.getNavigation().stop();
                 zombie.jump();
-
-                // Ставим блок прямо под ноги (на место, где он только что стоял)
                 world.setBlockState(zombiePos, Blocks.DIRT.getDefaultState());
-
-                // Небольшой "пинок" вверх, чтобы зомби точно оказался над новым блоком
                 zombie.refreshPositionAfterTeleport(zombie.getX(), zombie.getY() + 0.1, zombie.getZ());
-
-                buildCooldown = 12; // Пауза между блоками столба
+                buildCooldown = 15;
                 return;
             }
         }
-
-        // ЛОГИКА МОСТА (ВПЕРЕД)
-        Direction dir = getDirectionToTarget();
         BlockPos bridgePos = zombiePos.offset(dir).down();
-        if (world.isAir(bridgePos)) {
+        if (world.isAir(bridgePos) && world.isAir(zombiePos.offset(dir))) {
             world.setBlockState(bridgePos, Blocks.DIRT.getDefaultState());
             buildCooldown = 8;
         }
     }
 
-
-
+    // 3. Исправленный shouldContinue()
     @Override
     public boolean shouldContinue() {
-        // Если цель пропала - выключаемся
         if (zombie.getTarget() == null) return false;
-
-        // Если мы в процессе ломания - продолжаем, пока блок не исчезнет
         if (targetBlock != null) return isBreakable((ServerWorld)zombie.getWorld(), targetBlock);
-
-        // В остальных случаях (стройка) проверяем условия заново
+        if (zombie.getTarget().getY() > zombie.getY() + 1.2) return true;
         return shouldBuild((ServerWorld)zombie.getWorld());
     }
 
