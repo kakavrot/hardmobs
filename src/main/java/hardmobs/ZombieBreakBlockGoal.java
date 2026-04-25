@@ -18,6 +18,7 @@ public class ZombieBreakBlockGoal extends Goal {
 
     public ZombieBreakBlockGoal(ZombieEntity zombie) {
         this.zombie = zombie;
+        // test
         // Оставляем только LOOK, чтобы MOVE не конфликтовал с навигацией, когда мы просто идем
         this.setControls(EnumSet.of(Control.MOVE, Control.LOOK));
     }
