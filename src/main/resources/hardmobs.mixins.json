@@ -5,11 +5,10 @@
 	"mixins": [
 		"EntityVisibilityMixin",
 		"MobEntityAccessor",
-		"MobEntityMixin",
-		"ZombieEntityMixin",
-		"SkeletonEntityMixin",
-		"PlayerMiningFatigueMixin"
+		"PlayerMiningFatigueMixin",
+		"SkeletonEntityMixin"
 	],
+
 
 	"injectors": {
 		"defaultRequire": 1

@@ -26,39 +26,46 @@ public class ZombieBreakBlockGoal extends Goal {
     public void tick() {
         if (zombie.getTarget() == null) return;
         ServerWorld world = (ServerWorld) zombie.getWorld();
-
         long day = DifficultyManager.getDay(world);
 
-        // Считаем тики, если зомби стоит на месте (застрял)
-        if (zombie.getVelocity().horizontalLengthSquared() < 0.001) {
-            rageTimer++;
-        } else {
-            // Если он хоть немного движется, таймер копится в 5 раз медленнее
-            rageTimer += 0; // Или можно поставить 1, если хочешь чтобы он все равно бахал со временем
-        }
+        // 1. ТАЙМЕР АННИГИЛЯЦИИ (Копится всегда)
+        rageTimer++;
 
-        // Расчет времени взрыва
+        // Расчет лимита (как договаривались: на 3 день - 20 сек, дальше меньше)
         int secondsLimit = (int) (20 - (day - 3));
         if (secondsLimit < 5) secondsLimit = 5;
         int ticksLimit = secondsLimit * 20;
 
+        // Если время вышло - БАБАХ
         if (rageTimer >= ticksLimit) {
             annihilateSurroundings(world);
-            rageTimer = 0;
+            rageTimer = 0; // Сброс для следующего цикла
+            zombie.getNavigation().stop(); // Останавливаем зомби, чтобы он "осознал" перемены
+            return;
         }
 
-        // Если зомби удалось ударить игрока, ванильный ИИ это сделает сам,
-        // а мы просто сбросим таймер по факту близости
-        if (zombie.distanceTo(zombie.getTarget()) < 2.0) {
-            rageTimer = 0;
+        // 2. АТАКА (Сбрасывает таймер только если удар БЫЛ)
+        double dist = zombie.distanceTo(zombie.getTarget());
+        double dy = zombie.getTarget().getY() - zombie.getY();
+
+        if (dist < 2.3 && Math.abs(dy) < 1.5) {
+            if (zombie.age % 10 == 0) {
+                zombie.swingHand(net.minecraft.util.Hand.MAIN_HAND);
+                // Если атака успешна (игрок получил урон) — только тогда сброс
+                if (zombie.tryAttack(zombie.getTarget())) {
+                    rageTimer = 0;
+                }
+            }
         }
     }
 
+
     private void annihilateSurroundings(ServerWorld world) {
         BlockPos center = zombie.getBlockPos();
-        int radius = 2;
+        int radius = 3; // Увеличили радиус для пущей эффективности
+
         for (int x = -radius; x <= radius; x++) {
-            for (int y = -1; y <= radius + 1; y++) {
+            for (int y = -1; y <= 3; y++) { // Теперь ломает выше головы (до 3 блоков)
                 for (int z = -radius; z <= radius; z++) {
                     BlockPos target = center.add(x, y, z);
                     if (world.getBlockState(target).getHardness(world, target) >= 0) {
@@ -67,5 +74,8 @@ public class ZombieBreakBlockGoal extends Goal {
                 }
             }
         }
+        // Легкий толчок вверх, чтобы не застрял в падающих вещах
+        zombie.addVelocity(0, 0.1, 0);
     }
+
 }
