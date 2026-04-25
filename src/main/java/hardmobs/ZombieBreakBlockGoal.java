@@ -33,7 +33,7 @@ public class ZombieBreakBlockGoal extends Goal {
         // Ищем блок для взаимодействия
         targetBlock = findTargetBlock(world);
 
-        // Если блока для ломания нет, проверяем, нужно ли строить
+        // Если блока для ломания нет, проверяем, нужно ли строить?
         if (targetBlock == null) {
             return shouldBuild(world);
         }
