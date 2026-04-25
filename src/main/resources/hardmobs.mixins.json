@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "hardmobs.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"mixins": [
+		"EntityVisibilityMixin",
+		"MobEntityAccessor",
+		"MobEntityMixin",
+		"ZombieEntityMixin"
+	],
+
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
