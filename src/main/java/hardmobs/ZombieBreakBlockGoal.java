@@ -70,17 +70,27 @@ public class ZombieBreakBlockGoal extends Goal {
         if (buildCooldown > 0) return false;
 
         double targetY = zombie.getTarget().getY();
-        BlockPos zombiePos = zombie.getBlockPos();
+        double dy = targetY - zombie.getY();
+        double distanceToTargetSq = zombie.squaredDistanceTo(zombie.getTarget().getX(), zombie.getY(), zombie.getTarget().getZ());
 
-        // Условие для столба
-        if (targetY > zombie.getY() + 1.2 && zombie.isOnGround()) return true;
+        // Условие для СТОЛБА
+        if (dy > 1.2) { // Игрок выше головы зомби
+            // Если зомби уперся в стену ИЛИ находится очень близко к координатам игрока по горизонтали
+            if (zombie.horizontalCollision || distanceToTargetSq < 1.5) {
+                return zombie.isOnGround();
+            }
+        }
 
-        // Условие для моста
-        Direction dir = zombie.getHorizontalFacing();
-        if (world.isAir(zombiePos.offset(dir).down()) && targetY >= zombie.getY() - 1.0) return true;
+        // Условие для МОСТА
+        Direction dir = getDirectionToTarget();
+        BlockPos frontPos = zombie.getBlockPos().offset(dir);
+        if (world.isAir(frontPos) && world.isAir(frontPos.down()) && targetY >= zombie.getY() - 1.0) {
+            return true;
+        }
 
         return false;
     }
+
 
     private boolean isBreakable(ServerWorld world, BlockPos pos) {
         BlockState state = world.getBlockState(pos);
@@ -140,36 +150,33 @@ public class ZombieBreakBlockGoal extends Goal {
         BlockPos zombiePos = zombie.getBlockPos();
         double targetY = zombie.getTarget().getY();
 
-        // Вектор направления к игроку
-        double dx = zombie.getTarget().getX() - zombie.getX();
-        double dz = zombie.getTarget().getZ() - zombie.getZ();
-
-        // Определяем основное направление (N, S, E, W) на основе координат
-        Direction dir;
-        if (Math.abs(dx) > Math.abs(dz)) {
-            dir = dx > 0 ? Direction.EAST : Direction.WEST;
-        } else {
-            dir = dz > 0 ? Direction.SOUTH : Direction.NORTH;
-        }
-
-        // СТОЛБ (вверх)
-        if (targetY > zombie.getY() + 1.2 && zombie.isOnGround()) {
+        // ЛОГИКА СТОЛБА (ВВЕРХ)
+        if (targetY > zombie.getY() + 1.2) {
+            // Проверяем, что над головой нет препятствий
             if (world.isAir(zombiePos.up(2))) {
+                zombie.getNavigation().stop(); // Обязательно стопаем навигацию, чтобы не "съехал" со столба
                 zombie.jump();
+
+                // Ставим блок прямо под ноги (на место, где он только что стоял)
                 world.setBlockState(zombiePos, Blocks.DIRT.getDefaultState());
-                buildCooldown = 15;
+
+                // Небольшой "пинок" вверх, чтобы зомби точно оказался над новым блоком
+                zombie.refreshPositionAfterTeleport(zombie.getX(), zombie.getY() + 0.1, zombie.getZ());
+
+                buildCooldown = 12; // Пауза между блоками столба
+                return;
             }
         }
-        // МОСТ (в сторону игрока)
-        else {
-            BlockPos bridgePos = zombiePos.offset(dir).down();
-            if (world.isAir(bridgePos)) {
-                // Ставим блок под ноги в направлении цели
-                world.setBlockState(bridgePos, Blocks.DIRT.getDefaultState());
-                buildCooldown = 5;
-            }
+
+        // ЛОГИКА МОСТА (ВПЕРЕД)
+        Direction dir = getDirectionToTarget();
+        BlockPos bridgePos = zombiePos.offset(dir).down();
+        if (world.isAir(bridgePos)) {
+            world.setBlockState(bridgePos, Blocks.DIRT.getDefaultState());
+            buildCooldown = 8;
         }
     }
+
 
 
     @Override
@@ -199,4 +206,22 @@ public class ZombieBreakBlockGoal extends Goal {
     public boolean shouldRunEveryTick() {
         return true; // Важно для плавности анимации ломания
     }
+
+    private Direction getDirectionToTarget() {
+        if (zombie.getTarget() == null) {
+            return zombie.getHorizontalFacing();
+        }
+
+        // Вычисляем разницу координат между зомби и игроком
+        double dx = zombie.getTarget().getX() - zombie.getX();
+        double dz = zombie.getTarget().getZ() - zombie.getZ();
+
+        // Выбираем направление по наибольшей разнице (где разрыв больше, туда и строим)
+        if (Math.abs(dx) > Math.abs(dz)) {
+            return dx > 0 ? Direction.EAST : Direction.WEST;
+        } else {
+            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+        }
+    }
+
 }
