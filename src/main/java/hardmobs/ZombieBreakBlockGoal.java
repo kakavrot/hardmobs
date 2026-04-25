@@ -70,21 +70,26 @@ public class ZombieBreakBlockGoal extends Goal {
         if (buildCooldown > 0) return false;
 
         double targetY = zombie.getTarget().getY();
-        double dy = targetY - zombie.getY();
-        double distanceToTargetSq = zombie.squaredDistanceTo(zombie.getTarget().getX(), zombie.getY(), zombie.getTarget().getZ());
+        BlockPos zombiePos = zombie.getBlockPos();
+        Direction dir = getDirectionToTarget();
 
-        // Условие для СТОЛБА
-        if (dy > 1.2) { // Игрок выше головы зомби
-            // Если зомби уперся в стену ИЛИ находится очень близко к координатам игрока по горизонтали
-            if (zombie.horizontalCollision || distanceToTargetSq < 1.5) {
+        // 1. ПРОВЕРКА НА СТОЛБ (Игрок выше)
+        if (targetY > zombie.getY() + 1.2) {
+            // Строим столб, если уперлись в стену или стоим под игроком
+            if (zombie.horizontalCollision || zombie.distanceTo(zombie.getTarget()) < 2.5) {
                 return zombie.isOnGround();
             }
         }
 
-        // Условие для МОСТА
-        Direction dir = getDirectionToTarget();
-        BlockPos frontPos = zombie.getBlockPos().offset(dir);
-        if (world.isAir(frontPos) && world.isAir(frontPos.down()) && targetY >= zombie.getY() - 1.0) {
+        // 2. ПРОВЕРКА НА МОСТ (Игрок далеко на высоте или за пропастью)
+        BlockPos frontPos = zombiePos.offset(dir);
+        BlockPos bridgePos = frontPos.down();
+
+        // Условие моста: впереди пустота ИЛИ мы на столбе и до игрока есть расстояние
+        boolean isGap = world.isAir(frontPos) && world.isAir(bridgePos);
+        boolean isHighUp = zombie.getY() > world.getBottomY() + 64 && zombie.distanceTo(zombie.getTarget()) > 1.5;
+
+        if (isGap && (isHighUp || targetY >= zombie.getY() - 1.0)) {
             return true;
         }
 
@@ -137,20 +142,25 @@ public class ZombieBreakBlockGoal extends Goal {
         double targetY = zombie.getTarget().getY();
         Direction dir = getDirectionToTarget();
 
-        if (targetY > zombie.getY() + 1.2) {
+        // Логика столба
+        if (targetY > zombie.getY() + 1.2 && (zombie.horizontalCollision || zombie.distanceTo(zombie.getTarget()) < 2.0)) {
             if (world.isAir(zombiePos.up(2))) {
                 zombie.getNavigation().stop();
                 zombie.jump();
                 world.setBlockState(zombiePos, Blocks.DIRT.getDefaultState());
-                zombie.refreshPositionAfterTeleport(zombie.getX(), zombie.getY() + 0.1, zombie.getZ());
-                buildCooldown = 15;
+                zombie.refreshPositionAfterTeleport(zombie.getX(), zombie.getY() + 0.05, zombie.getZ());
+                buildCooldown = 12;
                 return;
             }
         }
+
+        // Логика моста (теперь более агрессивная)
         BlockPos bridgePos = zombiePos.offset(dir).down();
-        if (world.isAir(bridgePos) && world.isAir(zombiePos.offset(dir))) {
+        if (world.isAir(bridgePos)) {
+            // Перед тем как поставить блок моста, чуть-чуть притормаживаем, чтобы не упасть
+            zombie.getNavigation().stop();
             world.setBlockState(bridgePos, Blocks.DIRT.getDefaultState());
-            buildCooldown = 8;
+            buildCooldown = 6; // Быстрая стройка моста
         }
     }
 
@@ -158,8 +168,13 @@ public class ZombieBreakBlockGoal extends Goal {
     @Override
     public boolean shouldContinue() {
         if (zombie.getTarget() == null) return false;
+
+        // Если мы ломаем блок - не прерываемся
         if (targetBlock != null) return isBreakable((ServerWorld)zombie.getWorld(), targetBlock);
-        if (zombie.getTarget().getY() > zombie.getY() + 1.2) return true;
+
+        // Если мы в процессе стройки (высоко над землей или строим столб) - продолжаем
+        if (zombie.getY() > zombie.getTarget().getY() - 2.0 && buildCooldown > 0) return true;
+
         return shouldBuild((ServerWorld)zombie.getWorld());
     }
 
